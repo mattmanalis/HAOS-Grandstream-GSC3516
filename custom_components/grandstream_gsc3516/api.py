@@ -124,7 +124,10 @@ class GrandstreamApiClient:
         body = payload.get("body")
         if body is None:
             return None
-        return str(body)
+        value = str(body).strip()
+        if value.lower() in {"unauthorized", "forbidden", "invalid request"}:
+            return None
+        return value
 
     async def async_list_bs_accounts(self) -> list[dict[str, Any]]:
         """Fetch account list used by native call endpoint."""

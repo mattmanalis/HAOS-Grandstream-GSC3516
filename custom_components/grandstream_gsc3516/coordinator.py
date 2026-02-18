@@ -99,6 +99,10 @@ class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]])
         if not had_success:
             raise UpdateFailed("Unable to poll any supported status endpoint")
 
+        # Keep core host visibility even when p-value polling is auth-limited.
+        if "ip" not in status or not str(status.get("ip", "")).strip():
+            status["ip"] = self.config_entry.data.get(CONF_HOST, "")
+
         return {
             COORDINATOR_KEY_ONLINE: True,
             COORDINATOR_KEY_STATUS: status,

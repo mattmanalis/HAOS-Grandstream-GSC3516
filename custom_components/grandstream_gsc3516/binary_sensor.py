@@ -22,6 +22,7 @@ from .const import (
     CONF_CALL_STATUS_KEY,
     CONF_SIP_REGISTERED_KEY,
     CONF_SIP_REGISTERED_ON_VALUES,
+    COORDINATOR_KEY_ACCOUNTS,
     COORDINATOR_KEY_LINE_STATUS,
     COORDINATOR_KEY_PHONE_STATUS,
     COORDINATOR_KEY_STATUS,
@@ -107,15 +108,16 @@ class GrandstreamBinarySensor(
 
         if self.entity_description.key == "sip_registered":
             key = str(self._entry.options.get(CONF_SIP_REGISTERED_KEY, "")).strip()
-            if not key:
-                return None
-            raw = str(self._status.get(key, "")).strip().lower()
             on_values = _parse_values(
                 self._entry.options.get(
                     CONF_SIP_REGISTERED_ON_VALUES, DEFAULT_SIP_REGISTERED_ON_VALUES
                 )
             )
-            return raw in on_values
+            if key:
+                raw = str(self._status.get(key, "")).strip().lower()
+                if raw:
+                    return raw in on_values
+            return self._sip_registered_from_accounts
 
         call_key = str(self._entry.options.get(CONF_CALL_STATUS_KEY, "")).strip()
         raw_state = self._call_state
@@ -143,8 +145,6 @@ class GrandstreamBinarySensor(
         """Return availability for each sensor."""
         if self.entity_description.key == "online":
             return True
-        if self.entity_description.key == "sip_registered":
-            return bool(str(self._entry.options.get(CONF_SIP_REGISTERED_KEY, "")).strip())
         return True
 
     @property
@@ -173,7 +173,36 @@ class GrandstreamBinarySensor(
 
         phone_state = self.coordinator.data.get(COORDINATOR_KEY_PHONE_STATUS)
         if phone_state is not None:
-            return str(phone_state).strip().lower()
+            raw = str(phone_state).strip().lower()
+            if raw in {"unauthorized", "forbidden", "invalid request"}:
+                return None
+            return raw
+        return None
+
+    @property
+    def _sip_registered_from_accounts(self) -> bool | None:
+        accounts = self.coordinator.data.get(COORDINATOR_KEY_ACCOUNTS, [])
+        if not isinstance(accounts, list) or not accounts:
+            return None
+
+        true_tokens = {"1", "true", "yes", "ok", "registered", "online", "available"}
+        false_tokens = {"0", "false", "no", "offline", "unregistered", "unknown"}
+        saw_false = False
+
+        for account in accounts:
+            if not isinstance(account, dict):
+                continue
+            for key in ("sipReg", "register_status", "registered", "status"):
+                if key not in account:
+                    continue
+                value = str(account.get(key, "")).strip().lower()
+                if value in true_tokens:
+                    return True
+                if value in false_tokens:
+                    saw_false = True
+
+        if saw_false:
+            return False
         return None
 
 

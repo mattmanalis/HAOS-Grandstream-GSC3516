@@ -86,6 +86,8 @@ class GrandstreamStatusSensor(CoordinatorEntity[GrandstreamDataUpdateCoordinator
     def native_value(self) -> str | None:
         """Return the value of the status field."""
         raw = self._status.get(self.entity_description.status_key)
+        if raw is None and self.entity_description.status_key == "ip":
+            raw = self._entry.data.get(CONF_HOST)
         if raw is None:
             return None
         return str(raw)
@@ -93,6 +95,8 @@ class GrandstreamStatusSensor(CoordinatorEntity[GrandstreamDataUpdateCoordinator
     @property
     def available(self) -> bool:
         """Entity is available if key exists in payload."""
+        if self.entity_description.status_key == "ip":
+            return True
         return super().available and self.entity_description.status_key in self._status
 
     @property
@@ -144,11 +148,17 @@ class GrandstreamCallStateSensor(CoordinatorEntity[GrandstreamDataUpdateCoordina
         if key:
             value = self._status.get(key)
             if value is not None:
-                return str(value)
+                state = str(value).strip().lower()
+                if state in {"unauthorized", "forbidden", "invalid request"}:
+                    return None
+                return state
 
         phone_status = self.coordinator.data.get(COORDINATOR_KEY_PHONE_STATUS)
         if phone_status is not None:
-            return str(phone_status)
+            state = str(phone_status).strip().lower()
+            if state in {"unauthorized", "forbidden", "invalid request"}:
+                return None
+            return state
         return None
 
     @property
