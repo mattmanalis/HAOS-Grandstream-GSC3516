@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from homeassistant.components.binary_sensor import BinarySensorDeviceClass, BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+    BinarySensorEntityDescription,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -29,11 +33,9 @@ from .coordinator import GrandstreamDataUpdateCoordinator
 
 
 @dataclass(frozen=True, kw_only=True)
-class GrandstreamBinarySensorDescription:
+class GrandstreamBinarySensorDescription(BinarySensorEntityDescription):
     """Description for Grandstream binary sensors."""
 
-    key: str
-    name: str
     device_class: BinarySensorDeviceClass | None = None
 
 
