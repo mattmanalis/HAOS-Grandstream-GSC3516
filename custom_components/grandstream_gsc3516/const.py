@@ -48,6 +48,7 @@ PLATFORMS = ["media_player", "sensor", "binary_sensor"]
 
 API_LOGIN_PATH = "/cgi-bin/dologin"
 API_ACCESS_PATH = "/cgi-bin/access"
+API_WILL_LOGIN_PATH = "/cgi-bin/api-will_login"
 API_VALUES_GET_PATH = "/cgi-bin/api.values.get"
 API_VALUES_POST_PATH = "/cgi-bin/api.values.post"
 API_GET_LINE_STATUS_PATH = "/cgi-bin/api-get_line_status"

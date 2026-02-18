@@ -65,14 +65,39 @@ class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]])
         if call_key and call_key not in keys:
             keys.append(call_key)
 
+        status: dict[str, str] = {}
+        line_status: list[dict[str, object]] = []
+        phone_status: str | None = None
+        accounts: list[dict[str, object]] = []
+        had_success = False
+
+        # Firmware differs: some status endpoints are readable without authenticated session.
         try:
-            await self.api.async_login()
             status = await self.api.async_get_values(keys)
+            had_success = True
+        except GrandstreamApiError:
+            status = {}
+
+        try:
             line_status = await self.api.async_get_line_status()
+            had_success = True
+        except GrandstreamApiError:
+            line_status = []
+
+        try:
             phone_status = await self.api.async_get_phone_status()
+            had_success = True
+        except GrandstreamApiError:
+            phone_status = None
+
+        try:
             accounts = await self.api.async_list_bs_accounts()
-        except GrandstreamApiError as err:
-            raise UpdateFailed(str(err)) from err
+            had_success = True
+        except GrandstreamApiError:
+            accounts = []
+
+        if not had_success:
+            raise UpdateFailed("Unable to poll any supported status endpoint")
 
         return {
             COORDINATOR_KEY_ONLINE: True,

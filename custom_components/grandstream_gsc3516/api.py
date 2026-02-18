@@ -18,6 +18,7 @@ from .const import (
     API_LOGIN_PATH,
     API_MAKE_CALL_PATH,
     API_PHONE_OPERATION_PATH,
+    API_WILL_LOGIN_PATH,
     API_VALUES_GET_PATH,
     API_VALUES_POST_PATH,
     LOGIN_PASSWORD_FIELD,
@@ -222,6 +223,16 @@ class GrandstreamApiClient:
         """Authenticate using common Grandstream login field names."""
         last_error: Exception | None = None
 
+        # Match stock UI flow on newer firmware.
+        try:
+            await self.session.get(
+                f"{self.base_url}{API_WILL_LOGIN_PATH}",
+                headers=self._default_headers,
+                timeout=10,
+            )
+        except ClientError:
+            pass
+
         for username_field in LOGIN_USERNAME_FIELDS:
             try:
                 user_hash = hashlib.md5(self.username.encode("utf-8")).hexdigest()
@@ -244,13 +255,15 @@ class GrandstreamApiClient:
                     timeout=10,
                 )
                 if response.status >= 400:
+                    last_error = GrandstreamApiError(f"Login failed HTTP {response.status}")
                     continue
 
                 payload = await self._extract_payload(response, raise_on_invalid=False)
                 if payload:
                     if str(payload.get("response", "")).lower() == "error":
                         body = str(payload.get("body", "login error"))
-                        raise GrandstreamApiError(f"Login failed: {body}")
+                        last_error = GrandstreamApiError(f"Login failed: {body}")
+                        continue
                     sid = payload.get("sid") or payload.get("session_id")
                     if sid:
                         self._sid = str(sid)
@@ -270,6 +283,18 @@ class GrandstreamApiClient:
                 continue
 
         raise GrandstreamApiError(f"Login failed: {last_error or 'invalid credentials or unsupported firmware'}")
+
+    async def async_probe_http(self) -> bool:
+        """Check basic HTTP reachability without requiring API auth."""
+        try:
+            response = await self.session.get(
+                self.base_url,
+                headers=self._default_headers,
+                timeout=10,
+            )
+        except ClientError:
+            return False
+        return response.status < 500
 
     async def _extract_payload(
         self,

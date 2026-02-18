@@ -115,9 +115,39 @@ class GrandstreamConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             session=session,
         )
 
-        await api.async_login()
-        values = await api.async_get_values(["product_model", "vendor_fullname"])
-        title = values.get("product_model") or data[CONF_HOST]
+        title = data[CONF_HOST]
+        had_success = False
+
+        # Try authenticated identity lookup first.
+        try:
+            await api.async_login()
+            values = await api.async_get_values(["product_model", "vendor_fullname"])
+            title = values.get("product_model") or title
+            had_success = True
+        except GrandstreamApiError:
+            pass
+
+        # Fallback for firmware that exposes status endpoints without login.
+        if not had_success:
+            try:
+                await api.async_get_line_status()
+                had_success = True
+            except GrandstreamApiError:
+                pass
+
+        if not had_success:
+            try:
+                await api.async_get_phone_status()
+                had_success = True
+            except GrandstreamApiError:
+                pass
+
+        if not had_success:
+            if await api.async_probe_http():
+                had_success = True
+
+        if not had_success:
+            raise GrandstreamApiError("Cannot connect to any supported endpoint")
 
         return {"title": title}
 
