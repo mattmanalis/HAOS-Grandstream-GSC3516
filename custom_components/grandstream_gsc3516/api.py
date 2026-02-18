@@ -46,7 +46,11 @@ class GrandstreamApiClient:
     @property
     def _default_headers(self) -> dict[str, str]:
         """Headers expected by newer Grandstream web stacks."""
-        headers = {"X-Requested-With": "XMLHttpRequest"}
+        headers = {
+            "X-Requested-With": "XMLHttpRequest",
+            "Origin": self.base_url,
+            "Referer": f"{self.base_url}/login",
+        }
         sid = self._effective_sid
         if sid:
             headers["Cookie"] = f"sid={sid}"
