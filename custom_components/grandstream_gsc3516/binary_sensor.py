@@ -36,6 +36,8 @@ from .coordinator import GrandstreamDataUpdateCoordinator
 class GrandstreamBinarySensorDescription(BinarySensorEntityDescription):
     """Description for Grandstream binary sensors."""
 
+    # Explicitly define to support HA builds that strictly access this attr.
+    entity_registry_enabled_default: bool = True
     device_class: BinarySensorDeviceClass | None = None
 
 
