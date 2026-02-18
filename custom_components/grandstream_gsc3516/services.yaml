@@ -1,0 +1,24 @@
+dial:
+  name: Dial
+  description: Trigger a call to an extension, ring group, or number.
+  fields:
+    entry_id:
+      required: true
+      example: "abcd1234efgh5678"
+      selector:
+        text:
+    number:
+      required: true
+      example: "6001"
+      selector:
+        text:
+
+hangup:
+  name: Hangup
+  description: End the active call on the configured device.
+  fields:
+    entry_id:
+      required: true
+      example: "abcd1234efgh5678"
+      selector:
+        text:

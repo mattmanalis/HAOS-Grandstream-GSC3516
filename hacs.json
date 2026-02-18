@@ -1,0 +1,12 @@
+{
+  "name": "Grandstream GSC3516",
+  "content_in_root": false,
+  "homeassistant": "2024.6.0",
+  "iot_class": "Local Polling",
+  "render_readme": true,
+  "zip_release": false,
+  "domains": [
+    "media_player",
+    "sensor"
+  ]
+}

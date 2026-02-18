@@ -1,0 +1,15 @@
+{
+  "domain": "grandstream_gsc3516",
+  "name": "Grandstream GSC3516",
+  "codeowners": [
+    "@mattmanalis"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/mattmanalis/HAOS-Grandstream-GSC3516",
+  "iot_class": "local_polling",
+  "loggers": [
+    "custom_components.grandstream_gsc3516"
+  ],
+  "requirements": [],
+  "version": "0.1.0"
+}

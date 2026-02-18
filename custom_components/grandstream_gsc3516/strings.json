@@ -1,0 +1,68 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Grandstream GSC3516",
+        "description": "Add a Grandstream speaker controller",
+        "data": {
+          "host": "Host/IP",
+          "port": "Port",
+          "username": "Username",
+          "password": "Password",
+          "use_https": "Use HTTPS",
+          "verify_ssl": "Verify SSL certificate"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect or authenticate",
+      "unknown": "Unexpected error"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Grandstream options",
+        "description": "Set polling and control mappings",
+        "data": {
+          "scan_interval": "Scan interval (seconds)",
+          "status_keys": "Status keys (colon or comma separated)",
+          "volume_pvalue": "Volume key/P-value",
+          "mute_pvalue": "Mute key/P-value",
+          "mute_true_value": "Mute ON value",
+          "mute_false_value": "Mute OFF value",
+          "sip_registered_key": "SIP registered status key",
+          "sip_registered_on_values": "SIP registered values (comma separated)",
+          "call_status_key": "Call status key",
+          "call_active_values": "Call active values (comma separated)",
+          "call_ringing_values": "Call ringing values (comma separated)",
+          "use_call_api": "Use native call API",
+          "call_api_account": "Call API account index",
+          "call_api_dialplan": "Call API dialplan",
+          "api_sid": "API session SID (optional)",
+          "dial_number_pvalue": "Dial number key/P-value",
+          "dial_trigger_pvalue": "Dial trigger key/P-value",
+          "dial_trigger_value": "Dial trigger value",
+          "hangup_pvalue": "Hangup key/P-value",
+          "hangup_value": "Hangup value"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "product_model": {
+        "name": "Model"
+      },
+      "firmware": {
+        "name": "Firmware"
+      },
+      "uptime": {
+        "name": "Uptime"
+      },
+      "ip_address": {
+        "name": "IP Address"
+      }
+    }
+  }
+}
