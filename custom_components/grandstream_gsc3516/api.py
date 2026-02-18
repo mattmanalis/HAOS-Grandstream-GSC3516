@@ -238,7 +238,8 @@ class GrandstreamApiClient:
 
         for username_field in LOGIN_USERNAME_FIELDS:
             try:
-                user_hash = hashlib.md5(self.username.encode("utf-8")).hexdigest()
+                # GSC3516 web app hashes login values with SHA-256.
+                user_hash = hashlib.sha256(self.username.encode("utf-8")).hexdigest()
                 access_response = await self.session.post(
                     f"{self.base_url}{API_ACCESS_PATH}",
                     data={"access": user_hash},
@@ -247,7 +248,7 @@ class GrandstreamApiClient:
                 )
                 access_payload = await self._extract_payload(access_response, raise_on_invalid=False)
                 token = str(access_payload.get("body", ""))
-                pass_hash = hashlib.md5(f"{self.password}{token}".encode("utf-8")).hexdigest()
+                pass_hash = hashlib.sha256(f"{self.password}{token}".encode("utf-8")).hexdigest()
                 response = await self.session.post(
                     f"{self.base_url}{API_LOGIN_PATH}",
                     data={
