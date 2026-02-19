@@ -117,6 +117,10 @@ class GrandstreamBinarySensor(
                 raw = str(self._status.get(key, "")).strip().lower()
                 if raw:
                     return raw in on_values
+            else:
+                fallback = self._sip_registered_from_status(on_values)
+                if fallback is not None:
+                    return fallback
             return self._sip_registered_from_accounts
 
         call_key = str(self._entry.options.get(CONF_CALL_STATUS_KEY, "")).strip()
@@ -203,6 +207,28 @@ class GrandstreamBinarySensor(
 
         if saw_false:
             return False
+        return None
+
+    def _sip_registered_from_status(self, on_values: set[str]) -> bool | None:
+        """Infer SIP registration from common p-value keys."""
+        keys = (
+            "sip_registered",
+            "PAccountRegistered1",
+            "AccountRegistered1",
+            "PAccountRegistered2",
+            "AccountRegistered2",
+        )
+        for key in keys:
+            raw_value = self._status.get(key)
+            if raw_value is None:
+                continue
+            raw = str(raw_value).strip().lower()
+            if not raw:
+                continue
+            if raw in on_values:
+                return True
+            if raw in {"0", "false", "no", "offline", "unregistered", "unknown"}:
+                return False
         return None
 
 

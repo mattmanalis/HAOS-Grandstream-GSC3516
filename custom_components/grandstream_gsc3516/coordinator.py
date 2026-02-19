@@ -29,6 +29,21 @@ from .const import (
 
 _LOGGER = logging.getLogger(__name__)
 
+FALLBACK_STATUS_KEYS: tuple[str, ...] = (
+    # Model / firmware / identity keys observed on GSC3516.
+    "Pphone_model",
+    "P68",
+    "P67",
+    "Pvendor_fullname",
+    # SIP registration keys available via api.values.get.
+    "PAccountRegistered1",
+    "PAccountRegistered2",
+    "PAccountRegistered3",
+    "AccountRegistered1",
+    "AccountRegistered2",
+    "AccountRegistered3",
+)
+
 
 class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]]):
     """Coordinator for polling Grandstream speaker status."""
@@ -64,6 +79,9 @@ class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]])
         call_key = self.config_entry.options.get(CONF_CALL_STATUS_KEY, "").strip()
         if call_key and call_key not in keys:
             keys.append(call_key)
+        for fallback_key in FALLBACK_STATUS_KEYS:
+            if fallback_key not in keys:
+                keys.append(fallback_key)
 
         status: dict[str, str] = {}
         line_status: list[dict[str, object]] = []
@@ -74,6 +92,7 @@ class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]])
         # Firmware differs: some status endpoints are readable without authenticated session.
         try:
             status = await self.api.async_get_values(keys)
+            self._apply_status_fallbacks(status)
             had_success = True
         except GrandstreamApiError:
             status = {}
@@ -95,6 +114,8 @@ class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]])
             had_success = True
         except GrandstreamApiError:
             accounts = []
+        if not accounts:
+            accounts = self._accounts_from_status(status)
 
         if not had_success:
             raise UpdateFailed("Unable to poll any supported status endpoint")
@@ -110,6 +131,57 @@ class GrandstreamDataUpdateCoordinator(DataUpdateCoordinator[dict[str, object]])
             COORDINATOR_KEY_PHONE_STATUS: phone_status,
             COORDINATOR_KEY_ACCOUNTS: accounts,
         }
+
+    @staticmethod
+    def _apply_status_fallbacks(status: dict[str, str]) -> None:
+        """Normalize firmware/model/SIP keys from p-value variants."""
+        if not status.get("product_model"):
+            fallback_model = status.get("phone_model") or status.get("Pphone_model")
+            if fallback_model:
+                status["product_model"] = str(fallback_model)
+
+        if not status.get("prog_version"):
+            fallback_fw = status.get("P68")
+            if fallback_fw:
+                status["prog_version"] = str(fallback_fw)
+
+        if not status.get("mac"):
+            fallback_mac = status.get("P67")
+            if fallback_mac:
+                status["mac"] = str(fallback_mac)
+
+        if not status.get("vendor_fullname"):
+            fallback_vendor = status.get("Pvendor_fullname")
+            if fallback_vendor:
+                status["vendor_fullname"] = str(fallback_vendor)
+
+        # Optional convenience key for SIP registration if no custom key is configured.
+        if "sip_registered" not in status:
+            for key in (
+                "PAccountRegistered1",
+                "AccountRegistered1",
+                "PAccountRegistered2",
+                "AccountRegistered2",
+            ):
+                value = status.get(key)
+                if value is not None and str(value).strip() != "":
+                    status["sip_registered"] = str(value)
+                    break
+
+    @staticmethod
+    def _accounts_from_status(status: dict[str, str]) -> list[dict[str, object]]:
+        """Synthesize account registration list when call account API is unauthorized."""
+        if not status:
+            return []
+        accounts: list[dict[str, object]] = []
+        for idx in range(1, 4):
+            for key in (f"PAccountRegistered{idx}", f"AccountRegistered{idx}"):
+                value = status.get(key)
+                if value is None or str(value).strip() == "":
+                    continue
+                accounts.append({"index": idx, "sipReg": str(value)})
+                break
+        return accounts
 
 
 def _parse_status_keys(raw: str) -> list[str]:
