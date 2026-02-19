@@ -13,6 +13,7 @@ from yarl import URL
 
 from .const import (
     API_ACCESS_PATH,
+    API_DO_REFRESH_PATH,
     API_GET_LINE_STATUS_PATH,
     API_GET_PHONE_STATUS_PATH,
     API_LIST_BS_ACCOUNTS_PATH,
@@ -326,6 +327,7 @@ class GrandstreamApiClient:
                                     {"sid": self._sid},
                                     response.url if response.url.host else URL(f"{self.base_url}/"),
                                 )
+                                await self._async_post_login_refresh()
                                 _LOGGER.debug(
                                     "Grandstream login succeeded via cookie using %s/%s",
                                     access_variant_name,
@@ -340,6 +342,7 @@ class GrandstreamApiClient:
                                     {"sid": self._sid},
                                     response.url if response.url.host else URL(f"{self.base_url}/"),
                                 )
+                                await self._async_post_login_refresh()
                                 _LOGGER.debug(
                                     "Grandstream login succeeded via top-level SID using %s/%s",
                                     access_variant_name,
@@ -356,6 +359,7 @@ class GrandstreamApiClient:
                                         {"sid": self._sid},
                                         response.url if response.url.host else URL(f"{self.base_url}/"),
                                     )
+                                    await self._async_post_login_refresh()
                                     _LOGGER.debug(
                                         "Grandstream login succeeded from body SID using %s/%s",
                                         access_variant_name,
@@ -367,6 +371,7 @@ class GrandstreamApiClient:
                         if response.cookies:
                             if "sid" in response.cookies:
                                 self._sid = response.cookies["sid"].value
+                                await self._async_post_login_refresh()
                                 _LOGGER.debug(
                                     "Grandstream login cookie accepted using %s access hash and %s pass hash",
                                     access_variant_name,
@@ -380,6 +385,22 @@ class GrandstreamApiClient:
                     continue
 
         raise GrandstreamApiError(f"Login failed: {last_error or 'invalid credentials or unsupported firmware'}")
+
+    async def _async_post_login_refresh(self) -> None:
+        """Finalize session similarly to web app after successful login."""
+        sid = self._effective_sid
+        if not sid:
+            return
+        try:
+            await self.session.post(
+                f"{self.base_url}{API_DO_REFRESH_PATH}",
+                data={"sid": sid},
+                headers=self._default_headers,
+                timeout=10,
+            )
+        except ClientError:
+            # Some firmware may not require or support dorefresh here.
+            return
 
     async def async_probe_http(self) -> bool:
         """Check basic HTTP reachability without requiring API auth."""
