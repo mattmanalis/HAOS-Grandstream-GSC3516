@@ -261,7 +261,9 @@ class GrandstreamApiClient:
         try:
             return await self._request(method, path, params=params, data=data)
         except GrandstreamApiError as err:
-            if "Unauthorized" not in str(err):
+            err_text = str(err).lower()
+            is_auth_error = "unauthorized" in err_text or "session-expired" in err_text
+            if not is_auth_error:
                 raise
             # Polling endpoints should not force re-login loops every cycle.
             if path in {
