@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import logging
+from urllib.parse import quote, urlencode
 
 from aiohttp import web
 import voluptuous as vol
@@ -16,6 +17,7 @@ from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.network import NoURLAvailableError, get_url
 from homeassistant.helpers.service import async_register_admin_service
 
 from .api import GrandstreamApiClient, GrandstreamApiError
@@ -36,9 +38,11 @@ from .const import (
     CONF_HANGUP_VALUE,
     CONF_API_SID,
     CONF_USE_CALL_API,
+    COORDINATOR_KEY_ACCOUNTS,
     COORDINATOR_KEY_LINE_STATUS,
     COORDINATOR_KEY_ONLINE,
     COORDINATOR_KEY_PHONE_STATUS,
+    COORDINATOR_KEY_STATUS,
     DEFAULT_CALL_API_ACCOUNT,
     DEFAULT_CALL_API_DIALPLAN,
     DEFAULT_CALL_API_HS,
@@ -59,6 +63,16 @@ GrandstreamConfigEntry = ConfigEntry[GrandstreamDataUpdateCoordinator]
 _LOGGER = logging.getLogger(__name__)
 WEBHOOK_VIEW_KEY = "webhook_view_registered"
 WEBHOOK_MAP_KEY = "webhook_map"
+WEBHOOK_ENDPOINT_PREFIX = "/api/grandstream_gsc3516"
+OUTBOUND_WEBHOOK_EVENT_TO_PVALUE = {
+    "registered": "P8305",
+    "unregistered": "P8306",
+    "incoming": "P8310",
+    "outgoing": "P8311",
+    "missed": "P8312",
+    "connected": "P8313",
+    "terminated": "P8314",
+}
 
 
 class GrandstreamWebhookView(HomeAssistantView):
@@ -137,6 +151,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GrandstreamConfigEntry) 
     coordinators[entry.entry_id] = coordinator
     await _async_register_webhook_view(hass)
     _register_entry_webhook(hass, entry)
+    await _async_auto_configure_speaker_webhooks(hass, entry, api)
     await _async_register_services(hass)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True
@@ -289,10 +304,81 @@ def _entry_webhook_id(entry: ConfigEntry) -> str:
     return f"gsc3516_{entry.data[CONF_HOST].replace('.', '_')}"
 
 
+def _entry_webhook_enabled(entry: ConfigEntry) -> bool:
+    return bool(entry.options.get(CONF_WEBHOOK_PUSH_ENABLED, DEFAULT_WEBHOOK_PUSH_ENABLED))
+
+
+async def _async_auto_configure_speaker_webhooks(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    api: GrandstreamApiClient,
+) -> None:
+    """Automatically program speaker outbound Action URLs when enabled."""
+    if not _entry_webhook_enabled(entry):
+        return
+
+    webhook_id = _entry_webhook_id(entry)
+    base_url = _resolve_hass_base_url(hass)
+    if not base_url:
+        _LOGGER.warning(
+            "Webhook push is enabled for %s, but Home Assistant URL is not configured; "
+            "cannot auto-provision speaker Action URLs.",
+            entry.data[CONF_HOST],
+        )
+        return
+
+    endpoint = f"{WEBHOOK_ENDPOINT_PREFIX}/{quote(webhook_id, safe='')}"
+    payload = {
+        p_value: f"{base_url}{endpoint}?{urlencode({'event': event_name})}"
+        for event_name, p_value in OUTBOUND_WEBHOOK_EVENT_TO_PVALUE.items()
+    }
+
+    try:
+        await api.async_login()
+        await api.async_set_values(payload)
+        _LOGGER.info(
+            "Auto-configured Grandstream outbound webhook URLs for %s (webhook_id=%s)",
+            entry.data[CONF_HOST],
+            webhook_id,
+        )
+    except GrandstreamApiError as err:
+        # Do not fail setup; user can still configure these manually.
+        _LOGGER.warning(
+            "Failed to auto-configure Grandstream outbound webhook URLs for %s: %s",
+            entry.data[CONF_HOST],
+            err,
+        )
+
+
+def _resolve_hass_base_url(hass: HomeAssistant) -> str | None:
+    """Best-effort Home Assistant base URL for device callbacks."""
+    kwargs_candidates = (
+        {"prefer_external": False, "allow_internal": True, "allow_ip": True},
+        {"prefer_external": False, "allow_internal": True},
+        {"prefer_external": False},
+        {},
+    )
+    for kwargs in kwargs_candidates:
+        try:
+            url = str(get_url(hass, **kwargs)).strip()
+        except TypeError:
+            continue
+        except NoURLAvailableError:
+            continue
+        if url:
+            return url.rstrip("/")
+
+    for fallback in (hass.config.internal_url, hass.config.external_url):
+        value = str(fallback or "").strip()
+        if value:
+            return value.rstrip("/")
+    return None
+
+
 def _register_entry_webhook(hass: HomeAssistant, entry: ConfigEntry) -> None:
     domain_data = hass.data.setdefault(DOMAIN, {})
     webhook_map: dict[str, str] = domain_data.setdefault(WEBHOOK_MAP_KEY, {})
-    if not bool(entry.options.get(CONF_WEBHOOK_PUSH_ENABLED, DEFAULT_WEBHOOK_PUSH_ENABLED)):
+    if not _entry_webhook_enabled(entry):
         return
     webhook_id = _entry_webhook_id(entry)
     webhook_map[webhook_id] = entry.entry_id
@@ -312,18 +398,26 @@ def _unregister_entry_webhook(hass: HomeAssistant, entry_id: str) -> None:
 
 
 def _map_push_event(event_raw: str) -> str | None:
+    canonical = event_raw.strip().lower()
+    if canonical in {"registered"}:
+        return "sip:registered"
+    if canonical in {"unregistered"}:
+        return "sip:unregistered"
+
     mapping = {
+        "bootup": "none",
         "incoming": "ringing",
         "outgoing": "dialing",
         "connected": "connected",
         "established": "connected",
+        "missed": "none",
         "terminated": "none",
         "idle": "none",
     }
-    if event_raw in mapping:
-        return mapping[event_raw]
-    if event_raw in {"ringing", "dialing", "connected", "none", "available"}:
-        return event_raw
+    if canonical in mapping:
+        return mapping[canonical]
+    if canonical in {"ringing", "dialing", "connected", "none", "available"}:
+        return canonical
     return None
 
 
@@ -335,6 +429,22 @@ def _apply_push_event_to_coordinator(
     if not isinstance(data, dict):
         data = {}
     data[COORDINATOR_KEY_ONLINE] = True
+    if line_state == "sip:registered" or line_state == "sip:unregistered":
+        sip_on = line_state == "sip:registered"
+        accounts = data.get(COORDINATOR_KEY_ACCOUNTS, [])
+        normalized_accounts = deepcopy(accounts) if isinstance(accounts, list) else []
+        if normalized_accounts and isinstance(normalized_accounts[0], dict):
+            normalized_accounts[0]["sipReg"] = "1" if sip_on else "0"
+        else:
+            normalized_accounts = [{"index": 1, "sipReg": "1" if sip_on else "0"}]
+        data[COORDINATOR_KEY_ACCOUNTS] = normalized_accounts
+        status = data.get(COORDINATOR_KEY_STATUS, {})
+        normalized_status = deepcopy(status) if isinstance(status, dict) else {}
+        normalized_status["sip_registered"] = "1" if sip_on else "0"
+        data[COORDINATOR_KEY_STATUS] = normalized_status
+        coordinator.async_set_updated_data(data)
+        return
+
     if line_state in {"none", "available"}:
         data[COORDINATOR_KEY_PHONE_STATUS] = "available"
         data[COORDINATOR_KEY_LINE_STATUS] = [{"line": 1, "state": "none"}]
