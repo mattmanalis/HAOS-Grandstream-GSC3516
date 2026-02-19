@@ -51,7 +51,7 @@ DEFAULT_CALL_API_DIALPLAN = "dialing"
 DEFAULT_CALL_API_USE_PASSCODE = True
 DEFAULT_CALL_API_HS = True
 DEFAULT_WEBHOOK_PUSH_ENABLED = True
-DEFAULT_WEBHOOK_ID = "gsc3516_living"
+DEFAULT_WEBHOOK_ID = ""
 
 PLATFORMS = ["media_player", "sensor", "binary_sensor"]
 
