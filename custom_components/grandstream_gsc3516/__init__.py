@@ -65,6 +65,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: GrandstreamConfigEntry) 
         static_sid=entry.options.get(CONF_API_SID, "").strip() or None,
         call_api_use_passcode=bool(
             entry.options.get(CONF_CALL_API_USE_PASSCODE, DEFAULT_CALL_API_USE_PASSCODE)
+            or str(entry.options.get(CONF_CALL_API_PASSCODE, "")).strip()
         ),
         call_api_passcode=str(entry.options.get(CONF_CALL_API_PASSCODE, "")).strip() or None,
         call_api_hs=bool(entry.options.get(CONF_CALL_API_HS, DEFAULT_CALL_API_HS)),
