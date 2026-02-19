@@ -111,25 +111,80 @@ class GrandstreamApiClient:
         if not values:
             return
 
-        try:
-            await self._request_with_auth(
-                "POST",
-                API_VALUES_POST_PATH,
-                data=values,
-            )
-        except GrandstreamApiError as err:
-            # Some firmware returns session-expired on api.values.post even with
-            # fresh login; fallback to the web app's config_update JSON endpoint.
-            if "session-expired" not in str(err).lower():
-                raise
-            await self._request_with_auth(
+        normalized = _normalize_pvalues(values)
+
+        async def _values_post_sid_auto() -> None:
+            await self._request_with_auth("POST", API_VALUES_POST_PATH, data=values)
+
+        async def _values_post_cookie_only() -> None:
+            await self._request("POST", API_VALUES_POST_PATH, data=values, allow_sid=False)
+
+        async def _values_post_sid_body() -> None:
+            payload = dict(values)
+            sid = self._effective_sid
+            if sid:
+                payload["sid"] = sid
+            await self._request("POST", API_VALUES_POST_PATH, data=payload, allow_sid=False)
+
+        async def _config_update_cookie_only() -> None:
+            await self._request(
                 "PUT",
                 API_CONFIG_UPDATE_PATH,
-                json_data={
-                    "alias": {},
-                    "pvalue": _normalize_pvalues(values),
-                },
+                json_data={"alias": {}, "pvalue": normalized},
+                allow_sid=False,
             )
+
+        async def _config_update_sid_body() -> None:
+            payload: dict[str, Any] = {"alias": {}, "pvalue": normalized}
+            sid = self._effective_sid
+            if sid:
+                payload["sid"] = sid
+            await self._request(
+                "PUT",
+                API_CONFIG_UPDATE_PATH,
+                json_data=payload,
+                allow_sid=False,
+            )
+
+        async def _config_update_sid_query() -> None:
+            sid = self._effective_sid
+            await self._request(
+                "PUT",
+                API_CONFIG_UPDATE_PATH,
+                params={"sid": sid} if sid else None,
+                json_data={"alias": {}, "pvalue": normalized},
+                allow_sid=False,
+            )
+
+        attempts: list[tuple[str, Any]] = [
+            ("values_post_sid_auto", _values_post_sid_auto),
+            ("values_post_cookie_only", _values_post_cookie_only),
+            ("values_post_sid_body", _values_post_sid_body),
+            ("config_update_cookie_only", _config_update_cookie_only),
+            ("config_update_sid_body", _config_update_sid_body),
+            ("config_update_sid_query", _config_update_sid_query),
+        ]
+
+        await self.async_login()
+        last_error: GrandstreamApiError | None = None
+        for name, attempt in attempts:
+            try:
+                await attempt()
+                _LOGGER.debug("Grandstream set_values succeeded via %s", name)
+                return
+            except GrandstreamApiError as err:
+                last_error = err
+                _LOGGER.debug("Grandstream set_values failed via %s: %s", name, err)
+                err_text = str(err).lower()
+                if "session-expired" in err_text or "unauthorized" in err_text:
+                    try:
+                        await self.async_login()
+                    except GrandstreamApiError:
+                        pass
+
+        raise GrandstreamApiError(
+            f"Failed to set values after trying all write methods: {last_error}"
+        )
 
     async def async_get_line_status(self) -> list[dict[str, Any]]:
         """Fetch line status list from native call API."""
