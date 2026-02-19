@@ -45,6 +45,7 @@ from .const import (
     DEFAULT_CALL_API_DIALPLAN,
     DEFAULT_CALL_API_HS,
     DEFAULT_CALL_API_USE_PASSCODE,
+    DEFAULT_WEBHOOK_ID,
     DEFAULT_WEBHOOK_PUSH_ENABLED,
     DEFAULT_CALL_RINGING_VALUES,
     DEFAULT_DIAL_TRIGGER_VALUE,
@@ -256,7 +257,7 @@ class GrandstreamOptionsFlow(config_entries.OptionsFlow):
                     CONF_WEBHOOK_ID,
                     default=defaults.get(
                         CONF_WEBHOOK_ID,
-                        f"gsc3516_{self._config_entry.data[CONF_HOST].replace('.', '_')}",
+                        DEFAULT_WEBHOOK_ID,
                     ),
                 ): str,
                 vol.Optional(
