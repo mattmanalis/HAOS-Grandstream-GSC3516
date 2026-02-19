@@ -67,6 +67,7 @@ API_LIST_BS_ACCOUNTS_PATH = "/cgi-bin/api-list_bs_accounts"
 API_BS_XSI_LOGIN_PATH = "/cgi-bin/api-bs_xsi_login"
 API_MAKE_CALL_PATH = "/cgi-bin/api-make_call"
 API_PHONE_OPERATION_PATH = "/cgi-bin/api-phone_operation"
+API_CONFIG_UPDATE_PATH = "/cgi-bin/config_update"
 
 # Try common login field names used by Grandstream web UIs.
 LOGIN_USERNAME_FIELDS = ("username", "P3", "user_name")

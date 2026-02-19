@@ -15,6 +15,7 @@ from yarl import URL
 from .const import (
     API_ACCESS_PATH,
     API_BS_XSI_LOGIN_PATH,
+    API_CONFIG_UPDATE_PATH,
     API_DO_REFRESH_PATH,
     API_GET_LINE_STATUS_PATH,
     API_GET_PHONE_STATUS_PATH,
@@ -110,11 +111,25 @@ class GrandstreamApiClient:
         if not values:
             return
 
-        await self._request_with_auth(
-            "POST",
-            API_VALUES_POST_PATH,
-            data=values,
-        )
+        try:
+            await self._request_with_auth(
+                "POST",
+                API_VALUES_POST_PATH,
+                data=values,
+            )
+        except GrandstreamApiError as err:
+            # Some firmware returns session-expired on api.values.post even with
+            # fresh login; fallback to the web app's config_update JSON endpoint.
+            if "session-expired" not in str(err).lower():
+                raise
+            await self._request_with_auth(
+                "PUT",
+                API_CONFIG_UPDATE_PATH,
+                json_data={
+                    "alias": {},
+                    "pvalue": _normalize_pvalues(values),
+                },
+            )
 
     async def async_get_line_status(self) -> list[dict[str, Any]]:
         """Fetch line status list from native call API."""
@@ -256,10 +271,17 @@ class GrandstreamApiClient:
         *,
         params: dict[str, str] | None = None,
         data: dict[str, str] | None = None,
+        json_data: dict[str, Any] | None = None,
     ) -> ClientResponse:
         """Make authenticated request and retry once after re-login."""
         try:
-            return await self._request(method, path, params=params, data=data)
+            return await self._request(
+                method,
+                path,
+                params=params,
+                data=data,
+                json_data=json_data,
+            )
         except GrandstreamApiError as err:
             err_text = str(err).lower()
             is_auth_error = "unauthorized" in err_text or "session-expired" in err_text
@@ -274,7 +296,13 @@ class GrandstreamApiClient:
             }:
                 raise
             await self.async_login()
-            return await self._request(method, path, params=params, data=data)
+            return await self._request(
+                method,
+                path,
+                params=params,
+                data=data,
+                json_data=json_data,
+            )
 
     async def _request(
         self,
@@ -283,6 +311,7 @@ class GrandstreamApiClient:
         *,
         params: dict[str, str] | None = None,
         data: dict[str, str] | None = None,
+        json_data: dict[str, Any] | None = None,
         allow_sid: bool = True,
     ) -> ClientResponse:
         """Send request with current SID/cookies."""
@@ -291,7 +320,8 @@ class GrandstreamApiClient:
         sid = self._effective_sid
         if allow_sid and sid:
             req_params.setdefault("sid", sid)
-            req_data.setdefault("sid", sid)
+            if json_data is None:
+                req_data.setdefault("sid", sid)
             # Use cookie jar instead of hardcoded Cookie header so other auth
             # cookies from login are preserved.
             self.session.cookie_jar.update_cookies(
@@ -305,6 +335,7 @@ class GrandstreamApiClient:
                 f"{self.base_url}{path}",
                 params=req_params or None,
                 data=req_data or None,
+                json=json_data,
                 headers=self._default_headers,
                 timeout=10,
             )
@@ -535,3 +566,15 @@ class GrandstreamApiClient:
             return {}
 
         return payload
+
+
+def _normalize_pvalues(values: dict[str, str]) -> dict[str, str]:
+    """Convert P-style keys (e.g. P8310) to config_update format (8310)."""
+    normalized: dict[str, str] = {}
+    for key, value in values.items():
+        raw_key = str(key).strip()
+        if not raw_key:
+            continue
+        normalized_key = raw_key[1:] if raw_key.startswith("P") else raw_key
+        normalized[normalized_key] = str(value)
+    return normalized
