@@ -59,7 +59,8 @@ class GrandstreamApiClient:
 
     @property
     def _effective_sid(self) -> str | None:
-        return self.static_sid or self._sid
+        # Prefer freshly authenticated SID over optional static fallback SID.
+        return self._sid or self.static_sid
 
     @property
     def base_url(self) -> str:
