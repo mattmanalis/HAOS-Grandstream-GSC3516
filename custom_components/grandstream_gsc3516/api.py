@@ -319,6 +319,20 @@ class GrandstreamApiClient:
                                     body,
                                 )
                                 continue
+                            # Prefer cookie SID when present.
+                            if response.cookies and "sid" in response.cookies:
+                                self._sid = response.cookies["sid"].value
+                                self.session.cookie_jar.update_cookies(
+                                    {"sid": self._sid},
+                                    response.url if response.url.host else URL(f"{self.base_url}/"),
+                                )
+                                _LOGGER.debug(
+                                    "Grandstream login succeeded via cookie using %s/%s",
+                                    access_variant_name,
+                                    pass_variant_name,
+                                )
+                                return
+
                             sid = payload.get("sid") or payload.get("session_id")
                             if sid:
                                 self._sid = str(sid)
@@ -327,7 +341,7 @@ class GrandstreamApiClient:
                                     response.url if response.url.host else URL(f"{self.base_url}/"),
                                 )
                                 _LOGGER.debug(
-                                    "Grandstream login succeeded using %s access hash and %s pass hash",
+                                    "Grandstream login succeeded via top-level SID using %s/%s",
                                     access_variant_name,
                                     pass_variant_name,
                                 )
@@ -335,7 +349,7 @@ class GrandstreamApiClient:
 
                             body = payload.get("body")
                             if isinstance(body, dict):
-                                sid = body.get("sid") or body.get("session_id") or body.get("identity")
+                                sid = body.get("sid") or body.get("session_id")
                                 if sid:
                                     self._sid = str(sid)
                                     self.session.cookie_jar.update_cookies(
@@ -343,13 +357,13 @@ class GrandstreamApiClient:
                                         response.url if response.url.host else URL(f"{self.base_url}/"),
                                     )
                                     _LOGGER.debug(
-                                        "Grandstream login succeeded from response body using %s/%s",
+                                        "Grandstream login succeeded from body SID using %s/%s",
                                         access_variant_name,
                                         pass_variant_name,
                                     )
                                     return
 
-                        # Cookie fallback: many Grandstream devices issue session cookies.
+                        # Cookie fallback if non-JSON response still sets session cookie.
                         if response.cookies:
                             if "sid" in response.cookies:
                                 self._sid = response.cookies["sid"].value
@@ -358,7 +372,9 @@ class GrandstreamApiClient:
                                     access_variant_name,
                                     pass_variant_name,
                                 )
-                            return
+                                return
+
+                        last_error = GrandstreamApiError("Login response did not include SID")
                 except ClientError as err:
                     last_error = err
                     continue
