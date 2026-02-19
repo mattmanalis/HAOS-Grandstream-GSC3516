@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
@@ -49,6 +50,7 @@ class GrandstreamApiClient:
 
     _sid: str | None = None
     static_sid: str | None = None
+    _login_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
     def _default_headers(self) -> dict[str, str]:
@@ -155,6 +157,9 @@ class GrandstreamApiClient:
 
     async def async_make_call(self, account: int, number: str, dialplan: str) -> dict[str, Any]:
         """Trigger outbound call via native API."""
+        # Ensure call-control endpoints use a fresh authenticated session.
+        await self.async_login()
+
         # Some firmware branches require XSI call session init before make_call.
         try:
             await self._request_with_auth("POST", API_BS_XSI_LOGIN_PATH)
@@ -198,7 +203,17 @@ class GrandstreamApiClient:
         """Make authenticated request and retry once after re-login."""
         try:
             return await self._request(method, path, params=params, data=data)
-        except GrandstreamApiError:
+        except GrandstreamApiError as err:
+            if "Unauthorized" not in str(err):
+                raise
+            # Polling endpoints should not force re-login loops every cycle.
+            if path in {
+                API_VALUES_GET_PATH,
+                API_GET_LINE_STATUS_PATH,
+                API_GET_PHONE_STATUS_PATH,
+                API_LIST_BS_ACCOUNTS_PATH,
+            }:
+                raise
             await self.async_login()
             return await self._request(method, path, params=params, data=data)
 
@@ -236,7 +251,19 @@ class GrandstreamApiClient:
         except ClientError as err:
             raise GrandstreamApiError(str(err)) from err
 
+        self._remember_response_cookies(response)
+
         if response.status in (401, 403):
+            body = await response.text()
+            sid = self._effective_sid or ""
+            _LOGGER.debug(
+                "Grandstream unauthorized on %s status=%s sid_len=%s sid_prefix=%s body=%s",
+                path,
+                response.status,
+                len(sid),
+                sid[:8],
+                body[:200],
+            )
             raise GrandstreamApiError(f"Unauthorized ({response.status})")
         if response.status >= 400:
             body = await response.text()
@@ -250,75 +277,78 @@ class GrandstreamApiClient:
 
     async def async_login(self) -> None:
         """Authenticate using common Grandstream login field names."""
-        last_error: Exception | None = None
+        async with self._login_lock:
+            last_error: Exception | None = None
 
-        # Match stock UI flow on newer firmware.
-        try:
-            await self.session.get(
-                f"{self.base_url}{API_WILL_LOGIN_PATH}",
-                headers=self._default_headers,
-                timeout=10,
-            )
-        except ClientError:
-            pass
+            # Match stock UI flow on newer firmware.
+            try:
+                preflight_response = await self.session.get(
+                    f"{self.base_url}{API_WILL_LOGIN_PATH}",
+                    headers=self._default_headers,
+                    timeout=10,
+                )
+                self._remember_response_cookies(preflight_response)
+            except ClientError:
+                pass
 
-        def _hash(value: str, algorithm: str) -> str:
-            payload = value.encode("utf-8")
-            if algorithm == "sha256":
-                return hashlib.sha256(payload).hexdigest()
-            return hashlib.md5(payload).hexdigest()
+            def _hash(value: str, algorithm: str) -> str:
+                payload = value.encode("utf-8")
+                if algorithm == "sha256":
+                    return hashlib.sha256(payload).hexdigest()
+                return hashlib.md5(payload).hexdigest()
 
-        def _build_access_candidates(username: str) -> list[tuple[str, str]]:
-            # label, value
-            return [
-                ("sha256", _hash(username, "sha256")),
-                ("md5", _hash(username, "md5")),
-                ("plain", username),
-            ]
+            def _build_access_candidates(username: str) -> list[tuple[str, str]]:
+                return [
+                    ("sha256", _hash(username, "sha256")),
+                    ("md5", _hash(username, "md5")),
+                    ("plain", username),
+                ]
 
-        def _build_password_candidates(password: str, token: str) -> list[tuple[str, str]]:
-            combined = f"{password}{token}"
-            return [
-                ("sha256(password+token)", _hash(combined, "sha256")),
-                ("md5(password+token)", _hash(combined, "md5")),
-                ("sha256(password)", _hash(password, "sha256")),
-                ("md5(password)", _hash(password, "md5")),
-                ("plain(password+token)", combined),
-                ("plain(password)", password),
-            ]
+            def _build_password_candidates(password: str, token: str) -> list[tuple[str, str]]:
+                combined = f"{password}{token}"
+                return [
+                    ("sha256(password+token)", _hash(combined, "sha256")),
+                    ("md5(password+token)", _hash(combined, "md5")),
+                    ("sha256(password)", _hash(password, "sha256")),
+                    ("md5(password)", _hash(password, "md5")),
+                    ("plain(password+token)", combined),
+                    ("plain(password)", password),
+                ]
 
-        for username_field in LOGIN_USERNAME_FIELDS:
-            for access_variant_name, access_value in _build_access_candidates(self.username):
-                try:
-                    access_response = await self.session.post(
-                        f"{self.base_url}{API_ACCESS_PATH}",
-                        data={"access": access_value},
-                        headers=self._default_headers,
-                        timeout=10,
-                    )
-                    access_payload = await self._extract_payload(access_response, raise_on_invalid=False)
-                    token = str(access_payload.get("body", ""))
-                    if not token:
-                        last_error = GrandstreamApiError("Login failed: empty challenge token")
-                        continue
-
-                    for pass_variant_name, pass_value in _build_password_candidates(self.password, token):
-                        response = await self.session.post(
-                            f"{self.base_url}{API_LOGIN_PATH}",
-                            data={
-                                username_field: self.username,
-                                LOGIN_PASSWORD_FIELD: pass_value,
-                            },
+            for username_field in LOGIN_USERNAME_FIELDS:
+                for access_variant_name, access_value in _build_access_candidates(self.username):
+                    try:
+                        access_response = await self.session.post(
+                            f"{self.base_url}{API_ACCESS_PATH}",
+                            data={"access": access_value},
                             headers=self._default_headers,
                             timeout=10,
                         )
-                        if response.status >= 400:
-                            last_error = GrandstreamApiError(f"Login failed HTTP {response.status}")
+                        self._remember_response_cookies(access_response)
+                        access_payload = await self._extract_payload(access_response, raise_on_invalid=False)
+                        token = str(access_payload.get("body", ""))
+                        if not token:
+                            last_error = GrandstreamApiError("Login failed: empty challenge token")
                             continue
 
-                        payload = await self._extract_payload(response, raise_on_invalid=False)
-                        if payload:
-                            if str(payload.get("response", "")).lower() == "error":
+                        for pass_variant_name, pass_value in _build_password_candidates(self.password, token):
+                            response = await self.session.post(
+                                f"{self.base_url}{API_LOGIN_PATH}",
+                                data={
+                                    username_field: self.username,
+                                    LOGIN_PASSWORD_FIELD: pass_value,
+                                },
+                                headers=self._default_headers,
+                                timeout=10,
+                            )
+                            self._remember_response_cookies(response)
+
+                            if response.status >= 400:
+                                last_error = GrandstreamApiError(f"Login failed HTTP {response.status}")
+                                continue
+
+                            payload = await self._extract_payload(response, raise_on_invalid=False)
+                            if payload and str(payload.get("response", "")).lower() == "error":
                                 body = str(payload.get("body", "login error"))
                                 last_error = GrandstreamApiError(f"Login failed: {body}")
                                 _LOGGER.debug(
@@ -328,71 +358,47 @@ class GrandstreamApiClient:
                                     body,
                                 )
                                 continue
-                            # Prefer cookie SID when present.
-                            if response.cookies and "sid" in response.cookies:
-                                self._sid = response.cookies["sid"].value
-                                self.session.cookie_jar.update_cookies(
-                                    {"sid": self._sid},
-                                    response.url if response.url.host else URL(f"{self.base_url}/"),
-                                )
-                                await self._async_post_login_refresh()
-                                _LOGGER.debug(
-                                    "Grandstream login succeeded via cookie using %s/%s",
-                                    access_variant_name,
-                                    pass_variant_name,
-                                )
-                                return
 
-                            sid = payload.get("sid") or payload.get("session_id")
-                            if sid:
-                                self._sid = str(sid)
-                                self.session.cookie_jar.update_cookies(
-                                    {"sid": self._sid},
-                                    response.url if response.url.host else URL(f"{self.base_url}/"),
-                                )
-                                await self._async_post_login_refresh()
-                                _LOGGER.debug(
-                                    "Grandstream login succeeded via top-level SID using %s/%s",
-                                    access_variant_name,
-                                    pass_variant_name,
-                                )
-                                return
-
-                            body = payload.get("body")
-                            if isinstance(body, dict):
-                                sid = body.get("sid") or body.get("session_id")
+                            if payload:
+                                sid = payload.get("sid") or payload.get("session_id")
+                                if not sid and isinstance(payload.get("body"), dict):
+                                    sid = payload["body"].get("sid") or payload["body"].get("session_id")
                                 if sid:
                                     self._sid = str(sid)
                                     self.session.cookie_jar.update_cookies(
                                         {"sid": self._sid},
                                         response.url if response.url.host else URL(f"{self.base_url}/"),
                                     )
-                                    await self._async_post_login_refresh()
-                                    _LOGGER.debug(
-                                        "Grandstream login succeeded from body SID using %s/%s",
-                                        access_variant_name,
-                                        pass_variant_name,
-                                    )
-                                    return
 
-                        # Cookie fallback if non-JSON response still sets session cookie.
-                        if response.cookies:
-                            if "sid" in response.cookies:
-                                self._sid = response.cookies["sid"].value
+                            if self._effective_sid:
                                 await self._async_post_login_refresh()
                                 _LOGGER.debug(
-                                    "Grandstream login cookie accepted using %s access hash and %s pass hash",
+                                    "Grandstream login succeeded using %s/%s",
                                     access_variant_name,
                                     pass_variant_name,
                                 )
                                 return
 
-                        last_error = GrandstreamApiError("Login response did not include SID")
-                except ClientError as err:
-                    last_error = err
-                    continue
+                            last_error = GrandstreamApiError("Login response did not include SID")
+                    except ClientError as err:
+                        last_error = err
+                        continue
 
-        raise GrandstreamApiError(f"Login failed: {last_error or 'invalid credentials or unsupported firmware'}")
+            raise GrandstreamApiError(
+                f"Login failed: {last_error or 'invalid credentials or unsupported firmware'}"
+            )
+
+    def _remember_response_cookies(self, response: ClientResponse) -> None:
+        """Persist all response cookies, including IP-host cookies."""
+        if not response.cookies:
+            return
+        cookie_values = {name: morsel.value for name, morsel in response.cookies.items()}
+        if not cookie_values:
+            return
+        cookie_url = response.url if response.url.host else URL(f"{self.base_url}/")
+        self.session.cookie_jar.update_cookies(cookie_values, cookie_url)
+        if "sid" in cookie_values and cookie_values["sid"]:
+            self._sid = cookie_values["sid"]
 
     async def _async_post_login_refresh(self) -> None:
         """Finalize session similarly to web app after successful login."""
