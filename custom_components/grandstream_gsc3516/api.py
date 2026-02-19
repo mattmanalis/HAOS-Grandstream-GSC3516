@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import json
+import logging
 from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
@@ -28,6 +29,9 @@ from .const import (
 
 class GrandstreamApiError(Exception):
     """Raised when the Grandstream API fails."""
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(slots=True)
@@ -236,55 +240,84 @@ class GrandstreamApiClient:
         except ClientError:
             pass
 
+        def _hash(value: str, algorithm: str) -> str:
+            payload = value.encode("utf-8")
+            if algorithm == "sha256":
+                return hashlib.sha256(payload).hexdigest()
+            return hashlib.md5(payload).hexdigest()
+
+        # Grandstream firmware varies by branch; try common hash variants.
+        hash_algorithms = ("sha256", "md5")
+
         for username_field in LOGIN_USERNAME_FIELDS:
-            try:
-                # GSC3516 web app hashes login values with SHA-256.
-                user_hash = hashlib.sha256(self.username.encode("utf-8")).hexdigest()
-                access_response = await self.session.post(
-                    f"{self.base_url}{API_ACCESS_PATH}",
-                    data={"access": user_hash},
-                    headers=self._default_headers,
-                    timeout=10,
-                )
-                access_payload = await self._extract_payload(access_response, raise_on_invalid=False)
-                token = str(access_payload.get("body", ""))
-                pass_hash = hashlib.sha256(f"{self.password}{token}".encode("utf-8")).hexdigest()
-                response = await self.session.post(
-                    f"{self.base_url}{API_LOGIN_PATH}",
-                    data={
-                        username_field: self.username,
-                        LOGIN_PASSWORD_FIELD: pass_hash,
-                    },
-                    headers=self._default_headers,
-                    timeout=10,
-                )
-                if response.status >= 400:
-                    last_error = GrandstreamApiError(f"Login failed HTTP {response.status}")
-                    continue
-
-                payload = await self._extract_payload(response, raise_on_invalid=False)
-                if payload:
-                    if str(payload.get("response", "")).lower() == "error":
-                        body = str(payload.get("body", "login error"))
-                        last_error = GrandstreamApiError(f"Login failed: {body}")
+            for access_hash_alg in hash_algorithms:
+                try:
+                    user_hash = _hash(self.username, access_hash_alg)
+                    access_response = await self.session.post(
+                        f"{self.base_url}{API_ACCESS_PATH}",
+                        data={"access": user_hash},
+                        headers=self._default_headers,
+                        timeout=10,
+                    )
+                    access_payload = await self._extract_payload(access_response, raise_on_invalid=False)
+                    token = str(access_payload.get("body", ""))
+                    if not token:
+                        last_error = GrandstreamApiError("Login failed: empty challenge token")
                         continue
-                    sid = payload.get("sid") or payload.get("session_id")
-                    if sid:
-                        self._sid = str(sid)
-                        self.session.cookie_jar.update_cookies(
-                            {"sid": self._sid},
-                            response.url if response.url.host else URL(f"{self.base_url}/"),
-                        )
-                        return
 
-                # Cookie fallback: many Grandstream devices issue session cookies.
-                if response.cookies:
-                    if "sid" in response.cookies:
-                        self._sid = response.cookies["sid"].value
-                    return
-            except ClientError as err:
-                last_error = err
-                continue
+                    for pass_hash_alg in hash_algorithms:
+                        response = await self.session.post(
+                            f"{self.base_url}{API_LOGIN_PATH}",
+                            data={
+                                username_field: self.username,
+                                LOGIN_PASSWORD_FIELD: _hash(f"{self.password}{token}", pass_hash_alg),
+                            },
+                            headers=self._default_headers,
+                            timeout=10,
+                        )
+                        if response.status >= 400:
+                            last_error = GrandstreamApiError(f"Login failed HTTP {response.status}")
+                            continue
+
+                        payload = await self._extract_payload(response, raise_on_invalid=False)
+                        if payload:
+                            if str(payload.get("response", "")).lower() == "error":
+                                body = str(payload.get("body", "login error"))
+                                last_error = GrandstreamApiError(f"Login failed: {body}")
+                                _LOGGER.debug(
+                                    "Grandstream login attempt failed (%s/%s): %s",
+                                    access_hash_alg,
+                                    pass_hash_alg,
+                                    body,
+                                )
+                                continue
+                            sid = payload.get("sid") or payload.get("session_id")
+                            if sid:
+                                self._sid = str(sid)
+                                self.session.cookie_jar.update_cookies(
+                                    {"sid": self._sid},
+                                    response.url if response.url.host else URL(f"{self.base_url}/"),
+                                )
+                                _LOGGER.debug(
+                                    "Grandstream login succeeded using %s access hash and %s pass hash",
+                                    access_hash_alg,
+                                    pass_hash_alg,
+                                )
+                                return
+
+                        # Cookie fallback: many Grandstream devices issue session cookies.
+                        if response.cookies:
+                            if "sid" in response.cookies:
+                                self._sid = response.cookies["sid"].value
+                                _LOGGER.debug(
+                                    "Grandstream login cookie accepted using %s access hash and %s pass hash",
+                                    access_hash_alg,
+                                    pass_hash_alg,
+                                )
+                            return
+                except ClientError as err:
+                    last_error = err
+                    continue
 
         raise GrandstreamApiError(f"Login failed: {last_error or 'invalid credentials or unsupported firmware'}")
 
