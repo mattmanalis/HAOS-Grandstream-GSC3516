@@ -19,6 +19,9 @@ from .const import (
     ATTR_NUMBER,
     CONF_CALL_API_ACCOUNT,
     CONF_CALL_API_DIALPLAN,
+    CONF_CALL_API_HS,
+    CONF_CALL_API_PASSCODE,
+    CONF_CALL_API_USE_PASSCODE,
     CONF_DIAL_NUMBER_PVALUE,
     CONF_DIAL_TRIGGER_PVALUE,
     CONF_DIAL_TRIGGER_VALUE,
@@ -29,6 +32,8 @@ from .const import (
     COORDINATOR_KEY_LINE_STATUS,
     DEFAULT_CALL_API_ACCOUNT,
     DEFAULT_CALL_API_DIALPLAN,
+    DEFAULT_CALL_API_HS,
+    DEFAULT_CALL_API_USE_PASSCODE,
     DEFAULT_USE_CALL_API,
     CONF_USE_HTTPS,
     CONF_VERIFY_SSL,
@@ -58,6 +63,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: GrandstreamConfigEntry) 
         use_https=entry.data.get(CONF_USE_HTTPS, False),
         session=session,
         static_sid=entry.options.get(CONF_API_SID, "").strip() or None,
+        call_api_use_passcode=bool(
+            entry.options.get(CONF_CALL_API_USE_PASSCODE, DEFAULT_CALL_API_USE_PASSCODE)
+        ),
+        call_api_passcode=str(entry.options.get(CONF_CALL_API_PASSCODE, "")).strip() or None,
+        call_api_hs=bool(entry.options.get(CONF_CALL_API_HS, DEFAULT_CALL_API_HS)),
     )
 
     coordinator = GrandstreamDataUpdateCoordinator(hass, entry, api)

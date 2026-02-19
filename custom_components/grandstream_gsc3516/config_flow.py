@@ -16,6 +16,9 @@ from .const import (
     CONF_CALL_ACTIVE_VALUES,
     CONF_CALL_API_ACCOUNT,
     CONF_CALL_API_DIALPLAN,
+    CONF_CALL_API_HS,
+    CONF_CALL_API_PASSCODE,
+    CONF_CALL_API_USE_PASSCODE,
     CONF_CALL_RINGING_VALUES,
     CONF_CALL_STATUS_KEY,
     CONF_DIAL_NUMBER_PVALUE,
@@ -38,6 +41,8 @@ from .const import (
     DEFAULT_CALL_ACTIVE_VALUES,
     DEFAULT_CALL_API_ACCOUNT,
     DEFAULT_CALL_API_DIALPLAN,
+    DEFAULT_CALL_API_HS,
+    DEFAULT_CALL_API_USE_PASSCODE,
     DEFAULT_CALL_RINGING_VALUES,
     DEFAULT_DIAL_TRIGGER_VALUE,
     DEFAULT_HANGUP_VALUE,
@@ -228,6 +233,18 @@ class GrandstreamOptionsFlow(config_entries.OptionsFlow):
                     CONF_CALL_API_DIALPLAN,
                     default=defaults.get(CONF_CALL_API_DIALPLAN, DEFAULT_CALL_API_DIALPLAN),
                 ): str,
+                vol.Optional(
+                    CONF_CALL_API_USE_PASSCODE,
+                    default=defaults.get(CONF_CALL_API_USE_PASSCODE, DEFAULT_CALL_API_USE_PASSCODE),
+                ): bool,
+                vol.Optional(
+                    CONF_CALL_API_PASSCODE,
+                    default=defaults.get(CONF_CALL_API_PASSCODE, ""),
+                ): str,
+                vol.Optional(
+                    CONF_CALL_API_HS,
+                    default=defaults.get(CONF_CALL_API_HS, DEFAULT_CALL_API_HS),
+                ): bool,
                 vol.Optional(
                     CONF_API_SID,
                     default=defaults.get(CONF_API_SID, ""),

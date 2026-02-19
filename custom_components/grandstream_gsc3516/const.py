@@ -25,6 +25,9 @@ CONF_HANGUP_VALUE = "hangup_value"
 CONF_USE_CALL_API = "use_call_api"
 CONF_CALL_API_ACCOUNT = "call_api_account"
 CONF_CALL_API_DIALPLAN = "call_api_dialplan"
+CONF_CALL_API_USE_PASSCODE = "call_api_use_passcode"
+CONF_CALL_API_PASSCODE = "call_api_passcode"
+CONF_CALL_API_HS = "call_api_hs"
 CONF_API_SID = "api_sid"
 
 DEFAULT_PORT_HTTP = 80
@@ -43,6 +46,8 @@ DEFAULT_HANGUP_VALUE = "1"
 DEFAULT_USE_CALL_API = True
 DEFAULT_CALL_API_ACCOUNT = 0
 DEFAULT_CALL_API_DIALPLAN = "dialing"
+DEFAULT_CALL_API_USE_PASSCODE = False
+DEFAULT_CALL_API_HS = True
 
 PLATFORMS = ["media_player", "sensor", "binary_sensor"]
 

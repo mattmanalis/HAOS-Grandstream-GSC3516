@@ -50,6 +50,9 @@ class GrandstreamApiClient:
 
     _sid: str | None = None
     static_sid: str | None = None
+    call_api_use_passcode: bool = False
+    call_api_passcode: str | None = None
+    call_api_hs: bool = True
     _login_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     @property
@@ -116,11 +119,21 @@ class GrandstreamApiClient:
     async def async_get_line_status(self) -> list[dict[str, Any]]:
         """Fetch line status list from native call API."""
         # JS firmware uses POST with line/update_session.
-        response = await self._request_with_auth(
-            "POST",
-            API_GET_LINE_STATUS_PATH,
-            data={"line": "-1", "update_session": "false"},
-        )
+        data = {"line": "-1", "update_session": "false"}
+        if self._use_passcode_call_api:
+            response = await self._request(
+                "POST",
+                API_GET_LINE_STATUS_PATH,
+                params=self._call_api_auth_params,
+                data=data,
+                allow_sid=False,
+            )
+        else:
+            response = await self._request_with_auth(
+                "POST",
+                API_GET_LINE_STATUS_PATH,
+                data=data,
+            )
         payload = await self._extract_payload(response, raise_on_invalid=False)
         body = payload.get("body")
         if isinstance(body, list):
@@ -130,11 +143,21 @@ class GrandstreamApiClient:
     async def async_get_phone_status(self) -> str | None:
         """Fetch global phone status (e.g. available/ringing/connected)."""
         # JS firmware uses POST with update_session.
-        response = await self._request_with_auth(
-            "POST",
-            API_GET_PHONE_STATUS_PATH,
-            data={"update_session": "false"},
-        )
+        data = {"update_session": "false"}
+        if self._use_passcode_call_api:
+            response = await self._request(
+                "POST",
+                API_GET_PHONE_STATUS_PATH,
+                params=self._call_api_auth_params,
+                data=data,
+                allow_sid=False,
+            )
+        else:
+            response = await self._request_with_auth(
+                "POST",
+                API_GET_PHONE_STATUS_PATH,
+                data=data,
+            )
         payload = await self._extract_payload(response, raise_on_invalid=False)
         body = payload.get("body")
         if body is None:
@@ -146,7 +169,15 @@ class GrandstreamApiClient:
 
     async def async_list_bs_accounts(self) -> list[dict[str, Any]]:
         """Fetch account list used by native call endpoint."""
-        response = await self._request_with_auth("GET", API_LIST_BS_ACCOUNTS_PATH)
+        if self._use_passcode_call_api:
+            response = await self._request(
+                "GET",
+                API_LIST_BS_ACCOUNTS_PATH,
+                params=self._call_api_auth_params,
+                allow_sid=False,
+            )
+        else:
+            response = await self._request_with_auth("GET", API_LIST_BS_ACCOUNTS_PATH)
         payload = await self._extract_payload(response, raise_on_invalid=False)
         body = payload.get("body")
         results = payload.get("results")
@@ -157,6 +188,21 @@ class GrandstreamApiClient:
 
     async def async_make_call(self, account: int, number: str, dialplan: str) -> dict[str, Any]:
         """Trigger outbound call via native API."""
+        if self._use_passcode_call_api:
+            response = await self._request(
+                "GET",
+                API_MAKE_CALL_PATH,
+                params={
+                    **self._call_api_auth_params,
+                    "phonenumber": number,
+                    # Keep these for firmware variants that inspect them.
+                    "account": str(account),
+                    "dialplan": dialplan,
+                },
+                allow_sid=False,
+            )
+            return await self._extract_payload(response, raise_on_invalid=False)
+
         # Ensure call-control endpoints use a fresh authenticated session.
         await self.async_login()
 
@@ -189,7 +235,18 @@ class GrandstreamApiClient:
         data: dict[str, str] = {"cmd": cmd, "arg": arg}
         if dtmf is not None:
             data["dtmf"] = dtmf
-        response = await self._request_with_auth("POST", API_PHONE_OPERATION_PATH, data=data)
+        if self._use_passcode_call_api:
+            response = await self._request(
+                "GET",
+                API_PHONE_OPERATION_PATH,
+                params={
+                    **self._call_api_auth_params,
+                    **data,
+                },
+                allow_sid=False,
+            )
+        else:
+            response = await self._request_with_auth("POST", API_PHONE_OPERATION_PATH, data=data)
         return await self._extract_payload(response, raise_on_invalid=False)
 
     async def _request_with_auth(
@@ -224,12 +281,13 @@ class GrandstreamApiClient:
         *,
         params: dict[str, str] | None = None,
         data: dict[str, str] | None = None,
+        allow_sid: bool = True,
     ) -> ClientResponse:
         """Send request with current SID/cookies."""
         req_params = dict(params or {})
         req_data = dict(data or {})
         sid = self._effective_sid
-        if sid:
+        if allow_sid and sid:
             req_params.setdefault("sid", sid)
             req_data.setdefault("sid", sid)
             # Use cookie jar instead of hardcoded Cookie header so other auth
@@ -274,6 +332,29 @@ class GrandstreamApiClient:
             raise GrandstreamApiError(str(payload))
 
         return response
+
+    @property
+    def _use_passcode_call_api(self) -> bool:
+        return self.call_api_use_passcode and bool(self._effective_passcode)
+
+    @property
+    def _effective_passcode(self) -> str | None:
+        configured = (self.call_api_passcode or "").strip()
+        if configured:
+            return configured
+        # Most deployments use the same web login password for passcode APIs.
+        fallback = self.password.strip()
+        return fallback or None
+
+    @property
+    def _call_api_auth_params(self) -> dict[str, str]:
+        passcode = self._effective_passcode
+        if not passcode:
+            return {}
+        return {
+            "passcode": passcode,
+            "hs": "1" if self.call_api_hs else "0",
+        }
 
     async def async_login(self) -> None:
         """Authenticate using common Grandstream login field names."""
