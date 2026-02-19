@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 import logging
-import re
 from typing import Any
 
 from aiohttp import ClientError, ClientResponse, ClientSession
@@ -82,18 +81,11 @@ class GrandstreamApiClient:
         if not keys:
             return {}
 
-        try:
-            response = await self._request_with_auth(
-                "GET",
-                API_VALUES_GET_PATH,
-                params={"request": ":".join(keys)},
-            )
-        except GrandstreamApiError:
-            values = await self._async_get_values_via_ssh(keys)
-            if values:
-                _LOGGER.debug("Grandstream async_get_values succeeded via ssh_cli")
-                return values
-            raise
+        response = await self._request_with_auth(
+            "GET",
+            API_VALUES_GET_PATH,
+            params={"request": ":".join(keys)},
+        )
         payload = await self._extract_payload(response)
 
         body = payload.get("body")
@@ -109,111 +101,6 @@ class GrandstreamApiClient:
             key, value = line.split("=", 1)
             values[key.strip()] = value.strip()
         return values
-
-    async def _async_get_values_via_ssh(self, keys: list[str]) -> dict[str, str]:
-        """Read selected values through the SSH command shell."""
-        return await asyncio.to_thread(self._get_values_via_ssh, keys)
-
-    def _get_values_via_ssh(self, keys: list[str]) -> dict[str, str]:
-        """Blocking SSH status reader used when HTTP value polling fails."""
-        try:
-            import paramiko  # type: ignore[import-not-found]
-        except Exception:
-            return {}
-
-        import time
-
-        def _read_until_prompt(
-            channel: Any,
-            prompts: tuple[str, ...],
-            timeout: float = 10.0,
-        ) -> str:
-            end = time.monotonic() + timeout
-            buffer = ""
-            while time.monotonic() < end:
-                if channel.recv_ready():
-                    chunk = channel.recv(4096).decode("utf-8", errors="ignore")
-                    buffer += chunk
-                    if any(prompt in buffer for prompt in prompts):
-                        return buffer
-                else:
-                    time.sleep(0.05)
-            return buffer
-
-        def _send_and_capture(
-            channel: Any,
-            command: str,
-            prompts: tuple[str, ...],
-            timeout: float = 10.0,
-        ) -> str:
-            channel.send(command + "\n")
-            return _read_until_prompt(channel, prompts, timeout=timeout)
-
-        parsed: dict[str, str] = {}
-        client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-        try:
-            client.connect(
-                hostname=self.host,
-                port=22,
-                username=self.username,
-                password=self.password,
-                look_for_keys=False,
-                allow_agent=False,
-                timeout=10,
-                banner_timeout=10,
-                auth_timeout=10,
-            )
-            channel = client.invoke_shell(width=160, height=24)
-            _read_until_prompt(channel, ("GSC3516> ", "GSC3516>"), timeout=12.0)
-
-            status_output = _send_and_capture(
-                channel,
-                "status",
-                ("GSC3516> ", "GSC3516>"),
-                timeout=12.0,
-            )
-
-            model_match = re.search(r"Product Model:\s*(.+)", status_output)
-            if model_match:
-                parsed["product_model"] = model_match.group(1).strip()
-            prog_match = re.search(r"Prog\s*--\s*([^\r\n]+)", status_output)
-            if prog_match:
-                parsed["prog_version"] = prog_match.group(1).strip()
-            ip_match = re.search(r"IP Address\s*--\s*([^\r\n]+)", status_output)
-            if ip_match:
-                parsed["ip"] = ip_match.group(1).strip()
-            mac_match = re.search(r"MAC Address:\s*([0-9a-fA-F:]+)", status_output)
-            if mac_match:
-                parsed["mac"] = mac_match.group(1).strip()
-            uptime_match = re.search(r"System uptime:\s*([0-9]+)", status_output)
-            if uptime_match:
-                parsed["sys_uptime"] = uptime_match.group(1).strip()
-
-            _send_and_capture(channel, "config", ("CONFIG> ", "CONFIG>"), timeout=8.0)
-            for key in keys:
-                raw_key = str(key).strip()
-                if not raw_key:
-                    continue
-                output = _send_and_capture(
-                    channel,
-                    f"get {raw_key}",
-                    ("CONFIG> ", "CONFIG>"),
-                    timeout=8.0,
-                )
-                pattern = rf"(?m)^{re.escape(raw_key)}\s*=\s*(.+)$"
-                match = re.search(pattern, output)
-                if match:
-                    parsed[raw_key] = match.group(1).strip()
-
-            _send_and_capture(channel, "exit", ("GSC3516> ", "GSC3516>"), timeout=8.0)
-            channel.send("exit\n")
-        except Exception:
-            return {}
-        finally:
-            client.close()
-
-        return {k: v for k, v in parsed.items() if v}
 
     async def async_set_value(self, key: str, value: str) -> None:
         """Set a single P-value using api.values.post."""
