@@ -28,6 +28,8 @@ CONF_CALL_API_DIALPLAN = "call_api_dialplan"
 CONF_CALL_API_USE_PASSCODE = "call_api_use_passcode"
 CONF_CALL_API_PASSCODE = "call_api_passcode"
 CONF_CALL_API_HS = "call_api_hs"
+CONF_WEBHOOK_PUSH_ENABLED = "webhook_push_enabled"
+CONF_WEBHOOK_ID = "webhook_id"
 CONF_API_SID = "api_sid"
 
 DEFAULT_PORT_HTTP = 80
@@ -48,6 +50,7 @@ DEFAULT_CALL_API_ACCOUNT = 0
 DEFAULT_CALL_API_DIALPLAN = "dialing"
 DEFAULT_CALL_API_USE_PASSCODE = False
 DEFAULT_CALL_API_HS = True
+DEFAULT_WEBHOOK_PUSH_ENABLED = True
 
 PLATFORMS = ["media_player", "sensor", "binary_sensor"]
 
