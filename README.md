@@ -46,6 +46,44 @@ Use Home Assistant `Developer Tools -> Actions`.
 - `grandstream_gsc3516.hangup`
   - `entry_id`: integration entry ID
 
+## Dashboard (integration-native)
+
+Use the integration services directly in scripts/cards.
+
+Do:
+- `service: grandstream_gsc3516.dial`
+- `service: grandstream_gsc3516.hangup`
+- use entity IDs created by this integration (for example `sensor.grandstream_10_200_0_21_call_state`)
+
+Avoid:
+- direct `rest_command` calls to `/cgi-bin/api-make_call`
+- direct passcode URL calls from Lovelace buttons
+
+Example button actions:
+
+```yaml
+type: button
+name: Call 6400
+icon: mdi:phone
+tap_action:
+  action: call-service
+  service: grandstream_gsc3516.dial
+  data:
+    entry_id: 01KHT3NT3HC5K4MNGPPDFA0G8K
+    number: "6400"
+```
+
+```yaml
+type: button
+name: Hang Up
+icon: mdi:phone-hangup
+tap_action:
+  action: call-service
+  service: grandstream_gsc3516.hangup
+  data:
+    entry_id: 01KHT3NT3HC5K4MNGPPDFA0G8K
+```
+
 ## Notes
 
 - This integration uses Grandstream web CGI endpoints:
