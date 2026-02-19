@@ -246,16 +246,31 @@ class GrandstreamApiClient:
                 return hashlib.sha256(payload).hexdigest()
             return hashlib.md5(payload).hexdigest()
 
-        # Grandstream firmware varies by branch; try common hash variants.
-        hash_algorithms = ("sha256", "md5")
+        def _build_access_candidates(username: str) -> list[tuple[str, str]]:
+            # label, value
+            return [
+                ("sha256", _hash(username, "sha256")),
+                ("md5", _hash(username, "md5")),
+                ("plain", username),
+            ]
+
+        def _build_password_candidates(password: str, token: str) -> list[tuple[str, str]]:
+            combined = f"{password}{token}"
+            return [
+                ("sha256(password+token)", _hash(combined, "sha256")),
+                ("md5(password+token)", _hash(combined, "md5")),
+                ("sha256(password)", _hash(password, "sha256")),
+                ("md5(password)", _hash(password, "md5")),
+                ("plain(password+token)", combined),
+                ("plain(password)", password),
+            ]
 
         for username_field in LOGIN_USERNAME_FIELDS:
-            for access_hash_alg in hash_algorithms:
+            for access_variant_name, access_value in _build_access_candidates(self.username):
                 try:
-                    user_hash = _hash(self.username, access_hash_alg)
                     access_response = await self.session.post(
                         f"{self.base_url}{API_ACCESS_PATH}",
-                        data={"access": user_hash},
+                        data={"access": access_value},
                         headers=self._default_headers,
                         timeout=10,
                     )
@@ -265,12 +280,12 @@ class GrandstreamApiClient:
                         last_error = GrandstreamApiError("Login failed: empty challenge token")
                         continue
 
-                    for pass_hash_alg in hash_algorithms:
+                    for pass_variant_name, pass_value in _build_password_candidates(self.password, token):
                         response = await self.session.post(
                             f"{self.base_url}{API_LOGIN_PATH}",
                             data={
                                 username_field: self.username,
-                                LOGIN_PASSWORD_FIELD: _hash(f"{self.password}{token}", pass_hash_alg),
+                                LOGIN_PASSWORD_FIELD: pass_value,
                             },
                             headers=self._default_headers,
                             timeout=10,
@@ -286,8 +301,8 @@ class GrandstreamApiClient:
                                 last_error = GrandstreamApiError(f"Login failed: {body}")
                                 _LOGGER.debug(
                                     "Grandstream login attempt failed (%s/%s): %s",
-                                    access_hash_alg,
-                                    pass_hash_alg,
+                                    access_variant_name,
+                                    pass_variant_name,
                                     body,
                                 )
                                 continue
@@ -300,8 +315,8 @@ class GrandstreamApiClient:
                                 )
                                 _LOGGER.debug(
                                     "Grandstream login succeeded using %s access hash and %s pass hash",
-                                    access_hash_alg,
-                                    pass_hash_alg,
+                                    access_variant_name,
+                                    pass_variant_name,
                                 )
                                 return
 
@@ -311,8 +326,8 @@ class GrandstreamApiClient:
                                 self._sid = response.cookies["sid"].value
                                 _LOGGER.debug(
                                     "Grandstream login cookie accepted using %s access hash and %s pass hash",
-                                    access_hash_alg,
-                                    pass_hash_alg,
+                                    access_variant_name,
+                                    pass_variant_name,
                                 )
                             return
                 except ClientError as err:
