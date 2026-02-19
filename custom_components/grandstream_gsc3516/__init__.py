@@ -68,17 +68,17 @@ class GrandstreamWebhookView(HomeAssistantView):
     name = "api:grandstream_gsc3516:webhook"
     requires_auth = False
 
-    async def get(self, request: web.Request) -> web.Response:
-        return await self._handle(request)
+    async def get(self, request: web.Request, webhook_id: str) -> web.Response:
+        return await self._handle(request, webhook_id)
 
-    async def post(self, request: web.Request) -> web.Response:
-        return await self._handle(request)
+    async def post(self, request: web.Request, webhook_id: str) -> web.Response:
+        return await self._handle(request, webhook_id)
 
-    async def _handle(self, request: web.Request) -> web.Response:
+    async def _handle(self, request: web.Request, webhook_id: str) -> web.Response:
         hass: HomeAssistant = request.app["hass"]
         domain_data = hass.data.setdefault(DOMAIN, {})
         webhook_map: dict[str, str] = domain_data.setdefault(WEBHOOK_MAP_KEY, {})
-        webhook_id = str(request.match_info.get("webhook_id", "")).strip()
+        webhook_id = str(webhook_id).strip()
         entry_id = webhook_map.get(webhook_id)
         if not entry_id:
             return web.json_response({"status": "error", "message": "unknown webhook"}, status=404)
