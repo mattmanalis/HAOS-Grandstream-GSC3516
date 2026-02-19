@@ -51,15 +51,11 @@ class GrandstreamApiClient:
     @property
     def _default_headers(self) -> dict[str, str]:
         """Headers expected by newer Grandstream web stacks."""
-        headers = {
+        return {
             "X-Requested-With": "XMLHttpRequest",
             "Origin": self.base_url,
             "Referer": f"{self.base_url}/login",
         }
-        sid = self._effective_sid
-        if sid:
-            headers["Cookie"] = f"sid={sid}"
-        return headers
 
     @property
     def _effective_sid(self) -> str | None:
@@ -114,7 +110,12 @@ class GrandstreamApiClient:
 
     async def async_get_line_status(self) -> list[dict[str, Any]]:
         """Fetch line status list from native call API."""
-        response = await self._request_with_auth("GET", API_GET_LINE_STATUS_PATH)
+        # JS firmware uses POST with line/update_session.
+        response = await self._request_with_auth(
+            "POST",
+            API_GET_LINE_STATUS_PATH,
+            data={"line": "-1", "update_session": "false"},
+        )
         payload = await self._extract_payload(response, raise_on_invalid=False)
         body = payload.get("body")
         if isinstance(body, list):
@@ -123,7 +124,12 @@ class GrandstreamApiClient:
 
     async def async_get_phone_status(self) -> str | None:
         """Fetch global phone status (e.g. available/ringing/connected)."""
-        response = await self._request_with_auth("GET", API_GET_PHONE_STATUS_PATH)
+        # JS firmware uses POST with update_session.
+        response = await self._request_with_auth(
+            "POST",
+            API_GET_PHONE_STATUS_PATH,
+            data={"update_session": "false"},
+        )
         payload = await self._extract_payload(response, raise_on_invalid=False)
         body = payload.get("body")
         if body is None:
@@ -201,6 +207,12 @@ class GrandstreamApiClient:
         if sid:
             req_params.setdefault("sid", sid)
             req_data.setdefault("sid", sid)
+            # Use cookie jar instead of hardcoded Cookie header so other auth
+            # cookies from login are preserved.
+            self.session.cookie_jar.update_cookies(
+                {"sid": sid},
+                URL(f"{self.base_url}/"),
+            )
 
         try:
             response = await self.session.request(
@@ -319,6 +331,22 @@ class GrandstreamApiClient:
                                     pass_variant_name,
                                 )
                                 return
+
+                            body = payload.get("body")
+                            if isinstance(body, dict):
+                                sid = body.get("sid") or body.get("session_id") or body.get("identity")
+                                if sid:
+                                    self._sid = str(sid)
+                                    self.session.cookie_jar.update_cookies(
+                                        {"sid": self._sid},
+                                        response.url if response.url.host else URL(f"{self.base_url}/"),
+                                    )
+                                    _LOGGER.debug(
+                                        "Grandstream login succeeded from response body using %s/%s",
+                                        access_variant_name,
+                                        pass_variant_name,
+                                    )
+                                    return
 
                         # Cookie fallback: many Grandstream devices issue session cookies.
                         if response.cookies:
