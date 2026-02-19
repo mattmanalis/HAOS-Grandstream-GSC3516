@@ -10,6 +10,8 @@
   "loggers": [
     "custom_components.grandstream_gsc3516"
   ],
-  "requirements": [],
+  "requirements": [
+    "paramiko>=3.0.0"
+  ],
   "version": "0.1.0"
 }

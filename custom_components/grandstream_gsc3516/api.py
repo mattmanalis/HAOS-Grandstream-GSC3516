@@ -182,9 +182,93 @@ class GrandstreamApiClient:
                     except GrandstreamApiError:
                         pass
 
+        # Last resort: some firmware accepts config changes only via SSH CLI.
+        try:
+            await self._async_set_values_via_ssh(values)
+            _LOGGER.debug("Grandstream set_values succeeded via ssh_cli")
+            return
+        except GrandstreamApiError as ssh_err:
+            _LOGGER.debug("Grandstream set_values failed via ssh_cli: %s", ssh_err)
+
         raise GrandstreamApiError(
             f"Failed to set values after trying all write methods: {last_error}"
         )
+
+    async def _async_set_values_via_ssh(self, values: dict[str, str]) -> None:
+        """Apply p-values through the device SSH command shell."""
+        await asyncio.to_thread(self._set_values_via_ssh, values)
+
+    def _set_values_via_ssh(self, values: dict[str, str]) -> None:
+        """Blocking SSH CLI writer used as final fallback."""
+        try:
+            import paramiko  # type: ignore[import-not-found]
+        except Exception as err:
+            raise GrandstreamApiError(f"SSH fallback unavailable (paramiko missing): {err}") from err
+
+        import time
+
+        def _read_until_prompt(
+            channel: Any,
+            prompts: tuple[str, ...],
+            timeout: float = 10.0,
+        ) -> str:
+            end = time.monotonic() + timeout
+            buffer = ""
+            while time.monotonic() < end:
+                if channel.recv_ready():
+                    chunk = channel.recv(4096).decode("utf-8", errors="ignore")
+                    buffer += chunk
+                    if any(prompt in buffer for prompt in prompts):
+                        return buffer
+                else:
+                    time.sleep(0.05)
+            raise GrandstreamApiError(
+                f"SSH prompt timeout waiting for {prompts}; received: {buffer[-300:]}"
+            )
+
+        def _send_and_wait(
+            channel: Any,
+            command: str,
+            prompts: tuple[str, ...],
+            timeout: float = 10.0,
+        ) -> str:
+            channel.send(command + "\n")
+            return _read_until_prompt(channel, prompts, timeout=timeout)
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(
+                hostname=self.host,
+                port=22,
+                username=self.username,
+                password=self.password,
+                look_for_keys=False,
+                allow_agent=False,
+                timeout=10,
+                banner_timeout=10,
+                auth_timeout=10,
+            )
+            channel = client.invoke_shell(width=160, height=24)
+            _read_until_prompt(channel, ("GSC3516> ", "GSC3516>"), timeout=12.0)
+            _send_and_wait(channel, "config", ("CONFIG> ", "CONFIG>"), timeout=8.0)
+
+            for key, value in values.items():
+                if not key or any(ch.isspace() for ch in key):
+                    raise GrandstreamApiError(f"Invalid key for SSH set: {key!r}")
+                # Grandstream CONFIG shell accepts: set <name> <value>
+                _send_and_wait(channel, f"set {key} {value}", ("CONFIG> ", "CONFIG>"), timeout=8.0)
+
+            _send_and_wait(channel, "commit", ("CONFIG> ", "CONFIG>"), timeout=8.0)
+            _send_and_wait(channel, "cfg_update", ("CONFIG> ", "CONFIG>"), timeout=12.0)
+            _send_and_wait(channel, "exit", ("GSC3516> ", "GSC3516>"), timeout=8.0)
+            channel.send("exit\n")
+        except Exception as err:
+            if isinstance(err, GrandstreamApiError):
+                raise
+            raise GrandstreamApiError(f"SSH fallback failed: {err}") from err
+        finally:
+            client.close()
 
     async def async_get_line_status(self) -> list[dict[str, Any]]:
         """Fetch line status list from native call API."""
