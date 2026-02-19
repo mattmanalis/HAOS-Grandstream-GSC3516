@@ -55,6 +55,7 @@ API_VALUES_POST_PATH = "/cgi-bin/api.values.post"
 API_GET_LINE_STATUS_PATH = "/cgi-bin/api-get_line_status"
 API_GET_PHONE_STATUS_PATH = "/cgi-bin/api-get_phone_status"
 API_LIST_BS_ACCOUNTS_PATH = "/cgi-bin/api-list_bs_accounts"
+API_BS_XSI_LOGIN_PATH = "/cgi-bin/api-bs_xsi_login"
 API_MAKE_CALL_PATH = "/cgi-bin/api-make_call"
 API_PHONE_OPERATION_PATH = "/cgi-bin/api-phone_operation"
 

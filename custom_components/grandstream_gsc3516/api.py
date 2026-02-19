@@ -13,6 +13,7 @@ from yarl import URL
 
 from .const import (
     API_ACCESS_PATH,
+    API_BS_XSI_LOGIN_PATH,
     API_DO_REFRESH_PATH,
     API_GET_LINE_STATUS_PATH,
     API_GET_PHONE_STATUS_PATH,
@@ -154,6 +155,13 @@ class GrandstreamApiClient:
 
     async def async_make_call(self, account: int, number: str, dialplan: str) -> dict[str, Any]:
         """Trigger outbound call via native API."""
+        # Some firmware branches require XSI call session init before make_call.
+        try:
+            await self._request_with_auth("POST", API_BS_XSI_LOGIN_PATH)
+        except GrandstreamApiError:
+            # Not all devices expose/require this endpoint.
+            pass
+
         response = await self._request_with_auth(
             "POST",
             API_MAKE_CALL_PATH,
