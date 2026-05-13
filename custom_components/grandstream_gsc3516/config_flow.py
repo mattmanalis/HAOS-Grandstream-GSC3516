@@ -23,6 +23,7 @@ from .const import (
     CONF_WEBHOOK_PUSH_ENABLED,
     CONF_CALL_RINGING_VALUES,
     CONF_CALL_STATUS_KEY,
+    CONF_DEFAULT_DIAL_NUMBER,
     CONF_DIAL_NUMBER_PVALUE,
     CONF_DIAL_TRIGGER_PVALUE,
     CONF_DIAL_TRIGGER_VALUE,
@@ -220,6 +221,10 @@ class GrandstreamOptionsFlow(config_entries.OptionsFlow):
                 vol.Optional(
                     CONF_CALL_RINGING_VALUES,
                     default=defaults.get(CONF_CALL_RINGING_VALUES, DEFAULT_CALL_RINGING_VALUES),
+                ): str,
+                vol.Optional(
+                    CONF_DEFAULT_DIAL_NUMBER,
+                    default=defaults.get(CONF_DEFAULT_DIAL_NUMBER, ""),
                 ): str,
                 vol.Optional(
                     CONF_DIAL_NUMBER_PVALUE,

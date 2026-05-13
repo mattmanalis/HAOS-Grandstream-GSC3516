@@ -33,6 +33,7 @@ Custom HACS integration for controlling and monitoring Grandstream GSC3516 devic
    - `Use native call API`: recommended for modern GSC3516 firmware
    - `Call API account index`: account to place outbound calls from (for your unit use `0`)
    - `Call API dialplan`: dialplan mode string used by the device (for your unit use `dialing`)
+   - `Default dial number`: optional fallback destination used when the dial service omits `number`
    - `API session SID (optional)`: session token from web UI local storage when needed
    - `Dial/Hangup mappings`: P-values used to start and end calls
 
@@ -41,10 +42,12 @@ Custom HACS integration for controlling and monitoring Grandstream GSC3516 devic
 Use Home Assistant `Developer Tools -> Actions`.
 
 - `grandstream_gsc3516.dial`
-  - `entry_id`: integration entry ID
-  - `number`: extension, ring group, or destination
+  - `entity_id`: speaker media player entity ID
+  - `entry_id`: integration entry ID, still supported for advanced/manual use
+  - `number`: extension, ring group, or destination. Optional if `Default dial number` is configured.
 - `grandstream_gsc3516.hangup`
-  - `entry_id`: integration entry ID
+  - `entity_id`: speaker media player entity ID
+  - `entry_id`: integration entry ID, still supported for advanced/manual use
 
 ## Dashboard (integration-native)
 
@@ -69,7 +72,7 @@ tap_action:
   action: call-service
   service: grandstream_gsc3516.dial
   data:
-    entry_id: 01KHT3NT3HC5K4MNGPPDFA0G8K
+    entity_id: media_player.grandstream_10_200_0_21_speaker
     number: "6400"
 ```
 
@@ -81,7 +84,7 @@ tap_action:
   action: call-service
   service: grandstream_gsc3516.hangup
   data:
-    entry_id: 01KHT3NT3HC5K4MNGPPDFA0G8K
+    entity_id: media_player.grandstream_10_200_0_21_speaker
 ```
 
 ## Notes

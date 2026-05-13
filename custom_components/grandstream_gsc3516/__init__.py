@@ -10,15 +10,14 @@ from aiohttp import web
 import voluptuous as vol
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
-from homeassistant.core import HomeAssistant
+from homeassistant.const import ATTR_ENTITY_ID, CONF_HOST, CONF_PASSWORD, CONF_PORT, CONF_USERNAME
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.components.http import HomeAssistantView
 from homeassistant.exceptions import ConfigEntryNotReady, ServiceValidationError
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.device_registry import DeviceInfo
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, entity_registry as er
 from homeassistant.helpers.network import NoURLAvailableError, get_url
-from homeassistant.helpers.service import async_register_admin_service
 
 from .api import GrandstreamApiClient, GrandstreamApiError
 from .const import (
@@ -29,6 +28,7 @@ from .const import (
     CONF_CALL_API_HS,
     CONF_CALL_API_PASSCODE,
     CONF_CALL_API_USE_PASSCODE,
+    CONF_DEFAULT_DIAL_NUMBER,
     CONF_WEBHOOK_ID,
     CONF_WEBHOOK_PUSH_ENABLED,
     CONF_DIAL_NUMBER_PVALUE,
@@ -189,11 +189,16 @@ async def _async_register_services(hass: HomeAssistant) -> None:
     if hass.services.has_service(DOMAIN, SERVICE_DIAL):
         return
 
-    async def _handle_dial(call) -> None:
-        entry_id = call.data[ATTR_ENTRY_ID]
-        number = call.data[ATTR_NUMBER]
-        coordinator = _get_coordinator(hass, entry_id)
+    async def _handle_dial(call: ServiceCall) -> None:
+        coordinator = _get_coordinator_from_service_call(hass, call)
         options = coordinator.config_entry.options
+        number = str(call.data.get(ATTR_NUMBER, "")).strip() or str(
+            options.get(CONF_DEFAULT_DIAL_NUMBER, "")
+        ).strip()
+        if not number:
+            raise ServiceValidationError(
+                "Provide a number or set Default dial number in integration options."
+            )
 
         if bool(options.get(CONF_USE_CALL_API, DEFAULT_USE_CALL_API)):
             account = int(options.get(CONF_CALL_API_ACCOUNT, DEFAULT_CALL_API_ACCOUNT))
@@ -218,9 +223,8 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         await coordinator.api.async_set_values(payload)
         await coordinator.async_request_refresh()
 
-    async def _handle_hangup(call) -> None:
-        entry_id = call.data[ATTR_ENTRY_ID]
-        coordinator = _get_coordinator(hass, entry_id)
+    async def _handle_hangup(call: ServiceCall) -> None:
+        coordinator = _get_coordinator_from_service_call(hass, call)
         options = coordinator.config_entry.options
 
         if bool(options.get(CONF_USE_CALL_API, DEFAULT_USE_CALL_API)):
@@ -243,25 +247,62 @@ async def _async_register_services(hass: HomeAssistant) -> None:
         await coordinator.api.async_set_values({hangup_key: hangup_value})
         await coordinator.async_request_refresh()
 
-    async_register_admin_service(
-        hass,
+    hass.services.async_register(
         DOMAIN,
         SERVICE_DIAL,
         _handle_dial,
         schema=vol.Schema(
             {
-                vol.Required(ATTR_ENTRY_ID): cv.string,
-                vol.Required(ATTR_NUMBER): cv.string,
+                vol.Optional(ATTR_ENTRY_ID): cv.string,
+                vol.Optional(ATTR_ENTITY_ID): vol.Any(cv.entity_id, cv.entity_ids),
+                vol.Optional(ATTR_NUMBER): cv.string,
             }
         ),
     )
-    async_register_admin_service(
-        hass,
+    hass.services.async_register(
         DOMAIN,
         SERVICE_HANGUP,
         _handle_hangup,
-        schema=vol.Schema({vol.Required(ATTR_ENTRY_ID): cv.string}),
+        schema=vol.Schema(
+            {
+                vol.Optional(ATTR_ENTRY_ID): cv.string,
+                vol.Optional(ATTR_ENTITY_ID): vol.Any(cv.entity_id, cv.entity_ids),
+            }
+        ),
     )
+
+
+def _get_coordinator_from_service_call(
+    hass: HomeAssistant,
+    call: ServiceCall,
+) -> GrandstreamDataUpdateCoordinator:
+    """Resolve a coordinator from entry_id or a speaker entity_id."""
+    entry_id = str(call.data.get(ATTR_ENTRY_ID, "")).strip()
+    if entry_id:
+        return _get_coordinator(hass, entry_id)
+
+    entity_id = _first_entity_id(call.data.get(ATTR_ENTITY_ID))
+    if not entity_id:
+        raise ServiceValidationError("Provide either entity_id or entry_id.")
+
+    registry = er.async_get(hass)
+    entity_entry = registry.async_get(entity_id)
+    if entity_entry is None:
+        raise ServiceValidationError(f"Entity not found: {entity_id}")
+    if entity_entry.config_entry_id is None:
+        raise ServiceValidationError(f"Entity is not linked to a config entry: {entity_id}")
+    return _get_coordinator(hass, entity_entry.config_entry_id)
+
+
+def _first_entity_id(raw_entity_id: object) -> str:
+    """Return the first entity_id from service data."""
+    if isinstance(raw_entity_id, str):
+        return raw_entity_id.strip()
+    if isinstance(raw_entity_id, list):
+        for item in raw_entity_id:
+            if isinstance(item, str) and item.strip():
+                return item.strip()
+    return ""
 
 
 def _get_coordinator(hass: HomeAssistant, entry_id: str) -> GrandstreamDataUpdateCoordinator:

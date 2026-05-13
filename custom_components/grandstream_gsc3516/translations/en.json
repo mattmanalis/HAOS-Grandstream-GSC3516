@@ -40,6 +40,7 @@
           "call_api_account": "Call API account index",
           "call_api_dialplan": "Call API dialplan",
           "api_sid": "API session SID (optional)",
+          "default_dial_number": "Default dial number",
           "dial_number_pvalue": "Dial number key/P-value",
           "dial_trigger_pvalue": "Dial trigger key/P-value",
           "dial_trigger_value": "Dial trigger value",
